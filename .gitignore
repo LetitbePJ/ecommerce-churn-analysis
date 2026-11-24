@@ -1,0 +1,16 @@
+# 数据文件不上传（体积大，用 README 里的来源链接代替）
+data/
+*.xlsx
+*.csv
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
