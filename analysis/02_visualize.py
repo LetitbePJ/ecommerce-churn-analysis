@@ -5,14 +5,21 @@
 """
 import pandas as pd
 import numpy as np
+import logging
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 import seaborn as sns
 
+# 压掉其他平台字体缺失的提示（Windows 下会用列表里第一个可用的微软雅黑）
+logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
+
 # ---------- 全局样式 ----------
-plt.rcParams["font.sans-serif"] = ["Microsoft YaHei"]   # 中文字体
+# 中文字体按平台依次回退：Windows → macOS → Linux，找不到任一可用字体时退回英文标签也不报错
+CJK_FONTS = ["Microsoft YaHei", "SimHei", "PingFang SC", "Hiragino Sans GB",
+             "Noto Sans CJK SC", "WenQuanYi Zen Hei", "Arial Unicode MS"]
+plt.rcParams["font.sans-serif"] = CJK_FONTS + ["DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
-sns.set_theme(style="whitegrid", font="Microsoft YaHei")
+sns.set_theme(style="whitegrid", font=CJK_FONTS)
 C_MAIN, C_ACCENT, C_WARN = "#2E86AB", "#F18F01", "#C73E1D"
 
 df = pd.read_csv("data/clean_orders.csv",
@@ -37,7 +44,16 @@ monthly = (df.groupby("order_month")
 
 fig, ax1 = plt.subplots(figsize=(12, 5.5))
 x = range(len(monthly))
-ax1.bar(x, monthly["revenue"] / 1e4, color=C_MAIN, alpha=0.85, label="销售额(万£)")
+
+# 识别不完整月（最后一个月数据截止到当月某天），单独灰化，不参与趋势判断
+last_month = monthly["order_month"].iloc[-1]
+last_days = int(df.loc[df["order_month"] == last_month, "order_date"].dt.day.max())
+is_partial = last_days < 25
+bar_colors = [C_MAIN] * len(monthly)
+if is_partial:
+    bar_colors[-1] = "#BFBFBF"
+
+ax1.bar(x, monthly["revenue"] / 1e4, color=bar_colors, alpha=0.85, label="销售额(万£)")
 ax1.set_xticks(list(x))
 ax1.set_xticklabels(monthly["order_month"], rotation=45, ha="right")
 ax1.set_ylabel("销售额（万英镑）")
@@ -47,20 +63,27 @@ ax2 = ax1.twinx()
 ax2.plot(x, monthly["orders"], color=C_ACCENT, marker="o", ms=4, lw=1.8, label="订单数")
 ax2.set_ylabel("订单数")
 
-# 标注旺季峰值与谷底
+# 标注旺季峰值与谷底（均在完整月内取全局极值，不做年份筛选）
 peak = monthly["revenue"].idxmax()
-trough = monthly[monthly["order_month"].str.startswith(("2011",))]["revenue"].idxmin()
-ax1.annotate(f"旺季峰值 {monthly.loc[peak,'order_month']}\n£{monthly.loc[peak,'revenue']/1e4:.0f}万",
-             xy=(peak, monthly.loc[peak, "revenue"]/1e4), xytext=(peak-6, monthly["revenue"].max()/1e4 - 8),
+trough = monthly["revenue"].idxmin()
+peak_v = monthly.loc[peak, "revenue"] / 1e4
+trough_v = monthly.loc[trough, "revenue"] / 1e4
+ax1.annotate(f"旺季峰值 {monthly.loc[peak,'order_month']}\n£{peak_v:.0f}万",
+             xy=(peak, peak_v), xytext=(peak-6, peak_v - 8),
              fontsize=9, color=C_MAIN, arrowprops=dict(arrowstyle="->", color=C_MAIN),
              bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
 ax1.annotate(f"谷底 {monthly.loc[trough,'order_month']}",
-             xy=(trough, monthly.loc[trough, "revenue"]/1e4),
-             xytext=(trough-5, monthly["revenue"].min()/1e4+18),
+             xy=(trough, trough_v), xytext=(trough - 1, 24),
              fontsize=9, color=C_WARN, arrowprops=dict(arrowstyle="->", color=C_WARN),
-             bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
+             bbox=dict(facecolor="white", alpha=0.9, edgecolor="none"))
+if is_partial:
+    fig.text(0.995, 0.97,
+             f"注：{last_month} 仅 {last_days} 天（不完整月），灰柱；\n"
+             f"其销售额与订单数骤降为月末截断，不作趋势判断",
+             ha="right", va="top", fontsize=9, color="#7F7F7F")
 
-ax1.set_title("月度销售趋势：9-11月为旺季，11月销售额是2月的2.6倍", fontsize=13, pad=12)
+ax1.set_title(f"月度销售趋势：旺季峰值 {monthly.loc[peak,'order_month']} 为谷底 "
+              f"{monthly.loc[trough,'order_month']} 的 {peak_v/trough_v:.1f} 倍", fontsize=13, pad=12)
 h1, l1 = ax1.get_legend_handles_labels(); h2, l2 = ax2.get_legend_handles_labels()
 ax1.legend(h1 + h2, l1 + l2, loc="upper left", fontsize=9)
 save_fig(fig, "01_monthly_trend.png")
@@ -95,7 +118,9 @@ ax.set_title(f"客户价值帕累托曲线（n={n} 个客户）", fontsize=13, p
 save_fig(fig, "02_customer_pareto.png")
 
 # ============================================================
-# 图 3：RFM 分层 —— 人数占比 vs 金额占比（复用 SQL 的分层规则）
+# 图 3：RF 分层 —— 人数占比 vs 金额占比（复用 SQL 的分层规则）
+#   分层规则只消费 R / F 两个维度；M 与 F 秩相关 0.86，加入会重复计权，
+#   故 M 仅作为「金额描述列」保留，不参与定层（详见 README 局限说明）。
 # ============================================================
 obs_end = df["order_date"].max()
 rfm = (df.groupby("customer_id")
@@ -129,9 +154,22 @@ for bars in (b1, b2):
     ax.bar_label(bars, fmt="%.1f%%", fontsize=9, padding=2)
 ax.set_xticks(xp); ax.set_xticklabels(seg.index, fontsize=10)
 ax.yaxis.set_major_formatter(mtick.PercentFormatter())
-ax.set_title("RFM 分层：重要价值客户 27% 的人数贡献 70% 的金额", fontsize=13, pad=12)
+# 标题数字全部由本次计算结果生成，避免改代码后标题与柱子不一致
+w_row = seg[seg.index.str.startswith("重要价值客户")].iloc[0]
+ax.set_title(f"RF 分层：重要价值客户 {w_row['人数占比']:.1f}% 的人数贡献 {w_row['金额占比']:.1f}% 的金额",
+             fontsize=13, pad=12)
 ax.legend()
 save_fig(fig, "03_rfm_segments.png")
+
+# 分层明细（控制台 & 供报告核对；文档里的数字以这里为准）
+stat = (rfm.groupby("segment")
+           .agg(人数=("customer_id", "count"), 金额=("monetary", "sum"),
+                平均购买次数=("frequency", "mean"), 平均距上次购买=("recency", "mean")))
+stat["人数占比"] = stat["人数"] / stat["人数"].sum() * 100
+stat["金额占比"] = stat["金额"] / stat["金额"].sum() * 100
+print("\n[分层明细] 请以此为准同步 README / 报告.md：")
+print(stat[["人数占比", "金额占比", "平均购买次数", "平均距上次购买"]]
+      .sort_values("金额占比", ascending=False).round(1).to_string())
 
 # ============================================================
 # 图 4：留存热力图（按首购月 cohort × 距首购第 N 月）
@@ -155,8 +193,11 @@ sns.heatmap(heat, annot=True, fmt=".0f", cmap="YlGnBu", vmin=0, vmax=60,
             cbar_kws={"label": "留存率 %"}, linewidths=0.4, ax=ax)
 ax.set_xlabel("距首次购买")
 ax.set_ylabel("首购月份（cohort）")
-ax.set_title("留存热力图：次月留存约 19%，留存下来的客户会持续回访", fontsize=13, pad=12)
+m1 = heat["第1月"].median()          # 次月留存中位数：由数据算出，不写死
+ax.set_title(f"留存热力图：次月留存中位数 {m1:.0f}%，留存下来的客户会持续回访", fontsize=13, pad=12)
 save_fig(fig, "04_retention_heatmap.png")
+print(f"\n[留存] 次月留存中位数 {m1:.1f}%｜各 cohort 次月留存范围 "
+      f"{heat['第1月'].min():.0f}–{heat['第1月'].max():.0f}%")
 
 # ---------- 保存 RFM 明细表供报告使用 ----------
 rfm.to_csv("data/rfm_customers.csv", index=False)

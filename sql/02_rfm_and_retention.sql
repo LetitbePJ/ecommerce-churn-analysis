@@ -13,6 +13,9 @@ USE ecommerce;
 --   F (Frequency) 有效购买次数（按发票去重）   —— 越大越忠诚
 --   M (Monetary)  累计消费金额                 —— 越大越值钱
 -- 观测终点：数据里最后一天（2011-12-09），不是今天！
+-- 定层规则：只用 R / F 两个维度定层；M 仅计算并保留为描述列
+--   （M 与 F 的秩相关达 0.86，收入基本是"买得多 × 买得贵"的结果；
+--     把 M 也放进定层会对高频客户重复计权，还会把"大额低频"客户误判为高价值）
 -- ─────────────────────────────────────────────
 
 -- 步骤 1：算出每个客户的原始 R / F / M
@@ -94,4 +97,4 @@ GROUP BY cohort_month, month_offset
 ORDER BY cohort_month, month_offset;
 -- ↑ 这张"长表"就是留存表的原型。
 --   想要"留存率%"：把每个 cohort 的 month_offset=N 除以 month_offset=0 的人数，
---   在 Python 里转成透视表画热力图更直观（analysis/03_retention.py 会做）。
+--   在 Python 里转成透视表画热力图更直观（analysis/02_visualize.py 的图 4 就做这件事）。

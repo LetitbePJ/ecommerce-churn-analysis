@@ -1,0 +1,6 @@
+# 电商复购与流失分析 — Python 依赖
+# 测试环境：Python 3.11 / Windows，版本为开发时实测版本，相近版本亦可
+pandas>=2.0
+numpy>=1.24
+matplotlib>=3.7
+seaborn>=0.12

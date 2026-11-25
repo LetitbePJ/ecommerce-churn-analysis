@@ -25,25 +25,31 @@ print(f"[1] 重复值：删除 {before - len(df):,} 行，剩余 {len(df):,} 行
 print("[2] 缺失情况：")
 print((df.isnull().mean() * 100).round(2).astype(str) + " %")
 
-# TODO(你来做)：决定怎么处理
-#   - Customer ID 缺失 22.8%：用户分析必须剔除（无法归属到人）
-#   - Description 缺失 4382：可用同 StockCode 的其他行反查补全，补不全的剔除
+# 处理决策（非待办，已定稿）：
+#   - Customer ID 缺失 22.8%（243,007 行）：无法归因到具体客户，剔除。这批多为游客单，
+#     只影响"整体销售额"这一口径，不影响任何客户级指标（复购率 / 留存 / RF 分层均按客户聚合）
+#   - Description 缺失 4,382 行：该字段不参与任何指标计算，仅用于人工抽查商品构成，
+#     因此**不做** StockCode 反查补全，保留缺失（占比 <0.6%，不影响结论）
 df = df.dropna(subset=["Customer ID"])
 
 # ============ 3. 异常值 ============
-# TODO(你来做)：思考这几个阈值合不合理，可自行调整并写明理由
-#   - 负数量 = 退货/取消单，这里先剔除（只分析正向购买行为）
-#   - 0 或负价格 = 坏账调整/赠品，剔除
-#   - 极端价格（如 > 10000）多为人工录入错误，剔除
+# 阈值依据（已定稿；如需调整须同步 README 与 报告.md）：
+#   - Quantity <= 0 = 退货 / 取消单 / 坏账调整 → 本版只分析正向购买行为，整段剔除
+#     代价：销售额口径偏乐观（未扣退货），且丢掉"退货"这个潜在流失信号，已在报告 §5 局限声明
+#   - Price <= 0（赠品、坏账调整）或 > 10,000（人工录入错误）→ 剔除
+df["is_cancel"] = df["Invoice"].astype(str).str.startswith("C")
+n_cancel = int((df["is_cancel"] | (df["Quantity"] <= 0)).sum())
 rows_before = len(df)
 df = df[(df["Quantity"] > 0) & (df["Price"] > 0) & (df["Price"] <= 10000)]
-print(f"[3] 异常值：剔除 {rows_before - len(df):,} 行，剩余 {len(df):,} 行")
+print(f"[3] 异常值：剔除 {rows_before - len(df):,} 行"
+      f"（其中退货/取消 {n_cancel:,} 行），剩余 {len(df):,} 行")
 
 # ============ 4. 类型统一 ============
 df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
 df["Customer ID"] = df["Customer ID"].astype(int)
 df["Country"] = df["Country"].astype("category")
-df["is_cancel"] = df["Invoice"].astype(str).str.startswith("C")  # 标记取消单
+# 注：is_cancel 在剔除负数量后恒为 False（退货行已整段剔除），保留该列只为与 sql/00 表结构一致；
+# 退货规模记录在清洗报告的「退货取消行数」里，供后续做"退货 → 流失"关联分析
 
 # 新增派生字段（后面分析要用）
 df["amount"] = df["Quantity"] * df["Price"]        # 该行金额
@@ -64,6 +70,8 @@ report = {
     "客户数": df["Customer ID"].nunique(),
     "订单数": df["Invoice"].nunique(),
     "总销售额(英镑)": f"{df['amount'].sum():,.0f}",
+    "退货取消行数(已剔除)": n_cancel,
+    "观测终点": str(df["InvoiceDate"].max().date()),
 }
 print("\n[5] 清洗报告")
 for k, v in report.items():

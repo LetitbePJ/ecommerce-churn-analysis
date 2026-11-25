@@ -49,7 +49,7 @@ SHOW VARIABLES LIKE 'local_infile';
 --     SET GLOBAL local_infile = 1;
 --   然后重连会话，再执行下面这句（路径改成你电脑上的实际路径）：
 -- LOAD DATA LOCAL INFILE
---   'C:/Users/LetitbePJ/WorkBuddy/2026-11-05-13-49-13/ecommerce-churn-analysis/data/clean_orders.csv'
+--   'D:/path/to/ecommerce-churn-analysis/data/clean_orders.csv'   -- ← 改成你本机的绝对路径
 -- INTO TABLE orders
 -- FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
 -- LINES TERMINATED BY '\n'
