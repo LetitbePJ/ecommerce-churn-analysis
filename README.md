@@ -41,16 +41,19 @@
 ecommerce-churn-analysis/
 ├── analysis/
 │   ├── 01_cleaning.py        清洗脚本（106万行→79万行，含画像输出）
-│   └── 02_visualize.py       可视化（4 张图，从 CSV 复现，不依赖数据库）
+│   ├── 02_visualize.py       可视化（4 张图，从 CSV 复现，不依赖数据库）
+│   └── 03_churn_model.py     流失预测模型（观测窗→表现窗切分，防标签泄漏）
 ├── data/
 │   ├── online-retail-ii.xlsx 原始数据（UCI，两个年度工作表）
 │   ├── online_retail_ii.csv  合并后原始数据
-│   └── clean_orders.csv      清洗后数据（793,607 行）
+│   ├── clean_orders.csv      清洗后数据（793,607 行）
+│   ├── rfm_customers.csv     RF 分层明细
+│   └── churn_scores.csv      全量客户流失概率打分表（模型输出）
 ├── sql/
 │   ├── 00_schema_and_import.sql  建库建表 + 导入指南
 │   ├── 01_core_metrics.sql       4 个核心指标（含复购率、二八法则）
 │   └── 02_rfm_and_retention.sql  RFM 分层 + 留存 cohort
-├── charts/    图表输出
+├── charts/    图表输出（6 张）
 ├── requirements.txt  Python 依赖
 ├── LICENSE
 └── README.md
@@ -58,7 +61,8 @@ ecommerce-churn-analysis/
 
 > **数据不在仓库里**（体积原因，已被 .gitignore 排除）。复现步骤：从
 > [UCI Online Retail II](https://archive.ics.uci.edu/dataset/502/online+retail+ii)
-> 下载 xlsx 放入 `data/`，依次运行 `analysis/01_cleaning.py` → `analysis/02_visualize.py`。
+> 下载 xlsx 放入 `data/`，依次运行 `analysis/01_cleaning.py` → `analysis/02_visualize.py`
+> → `analysis/03_churn_model.py`。
 
 ## 五、清洗结果（2026-11-09 完成）
 
@@ -80,6 +84,7 @@ ecommerce-churn-analysis/
 - [x] 分析报告（2026-11-24，`报告.md`，含购买间隔/召回时机分析）
 - [x] 上传 GitHub（2026-11-24，github.com/LetitbePJ/ecommerce-churn-analysis）
 - [x] 评审修订（2026-11-25：文档数字统一、RF 定层口径澄清、残月标注、requirements/LICENSE 收尾）
+- [x] 流失预测模型（2026-11-25，`03_churn_model.py`：观测窗→表现窗切分防标签泄漏，PR-AUC 0.83）
 
 ## 七、SQL 阶段核心发现（2026-11-23）
 
@@ -93,9 +98,23 @@ ecommerce-churn-analysis/
 
 > ⚠️ 报告写作提醒：复购率必须注明口径（"按客户活跃天数 ≥2 天"），因为一个订单拆多行、同一天多单都会虚高订单口径的复购率。
 
-## 八、已知局限
+## 八、流失预测模型（2026-11-25，详见 `报告.md` §3.6）
+
+项目名里的 churn 由这一节兑现。核心设计：**观测窗口（2009-12 ~ 2011-09-09）造特征，表现窗口（其后 90 天）定标签**，两窗分离杜绝标签泄漏；候选特征经共线性筛查（frequency 与 n_active_days 秩相关 0.99 → 剔除冗余）后保留 6 个。
+
+| 方法 | PR-AUC | ROC-AUC | 说明 |
+|---|---|---|---|
+| **逻辑回归（主模型）** | **0.827** | 0.803 | 5 折 CV 0.818 ± 0.012，系数方向可解释 |
+| 随机森林（对照） | 0.838 | 0.812 | 与逻辑回归接近 → 信号以线性为主 |
+| 规则基线（recency>70天） | 0.672 | 0.677 | 模型显著优于经验规则 |
+| 随机猜测 | 0.566 | 0.500 | 基准线 |
+
+风险分层（全量打分）：低/中/高/极高四层的**实际流失率 20% → 52% → 76% → 90%**，单调递增，可直接用于运营触达优先级。产出：`charts/05_pr_curve.png`、`charts/06_feature_importance.png`、`data/churn_scores.csv`（全量客户概率打分）。
+
+## 九、已知局限
 
 - **RF 而非 RFM 定层**：M 与 F 的秩相关达 0.86，纳入定层会对高频客户重复计权，故只按 R/F 定层、M 作金额描述列（`sql/02` 与 `02_visualize.py` 均已注明）
 - **退货整段剔除**：销售额未扣退货，口径偏乐观；"退货 → 流失"的关联分析留作后续方向
 - **残月**：2011-12 仅 9 天数据，月度趋势图中已灰化标注，不参与趋势判断
 - **流失阈值外推**：70/90 天预警线来自 4,189 个复购客户的间隔分位数，对只买过 1 次的客户仅作参考
+- **流失模型仅单一时间切窗**：只用了"截止 2011-09-10 + 90 天"一个窗口，训练/测试为同一窗口内的客户随机切分；更严谨的做法是滚动多窗口（如逐季度前移切窗）验证时间稳定性
